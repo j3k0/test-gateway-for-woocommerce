@@ -1,5 +1,5 @@
 === Plugin Name ===
-Contributors: seanbarton
+Contributors: seanbarton,fovea
 Requires at least: 4.0
 Tested up to: 4.4.*
 Stable tag: trunk
