@@ -87,7 +87,11 @@ function sb_wc_test_init() {
 							),
 							'_sb_test_initial_result' => array (
 									'value' => get_post_meta ( $subscription->id, '_sb_test_initial_result', true ),
-									'label' => 'SB Result' 
+									'label' => 'SB Initial Result' 
+							),
+							'_sb_test_next_result' => array (
+									'value' => get_post_meta ( $subscription->id, '_sb_test_next_result', true ),
+									'label' => 'SB Next Result' 
 							) 
 					) 
 			);
@@ -128,24 +132,30 @@ function sb_wc_test_init() {
 		 * @return string[]|NULL[]
 		 */
 		public function process_payment($order_id) {
-			global $woocommerce;
-			
-			// if (get_post_meta ( $order_id, '_sb_test_initial_result', true )) {
 			$order = new WC_Order ( $order_id );
-			$order->payment_complete ();
-			$order->reduce_order_stock ();
-			$woocommerce->cart->empty_cart ();
+			$success = $order->get_meta ( '_sb_test_initial_result', true );
 			
-			return array (
-					'result' => 'success',
-					'redirect' => $order->get_checkout_order_received_url () 
-			);
-			// }
+			$order->add_order_note ( 'Process initial payment by gateway-unit-test ' . ($success ? 'successfully' : 'unsuccessfully') );
 			
-			// return array (
-			// 'result' => 'fail',
-			// 'redirect' => ''
-			// );
+			if ($success) {
+				$order->payment_complete ();
+				$order->update_status ( 'completed' );
+				WC_Subscriptions_Manager::process_subscription_payments_on_order ( $order );
+				
+				return array (
+						'result' => 'success',
+						'redirect' => '' 
+				);
+			} else {
+				$order->update_status ( 'failed' );
+				WC_Subscriptions_Manager::process_subscription_payment_failure_on_order ( $order );
+				WC_Subscriptions_Manager::clear_users_subscriptions_from_order ( $order );
+				
+				return array (
+						'result' => 'fail',
+						'redirect' => '' 
+				);
+			}
 		}
 		
 		/**
@@ -156,12 +166,13 @@ function sb_wc_test_init() {
 		 * @param int $product_id        	
 		 */
 		public function scheduled_subscription_payment($amount_to_charge, $order, $product_id) {
-			$result = true;
+			$success = $order->get_meta ( '_sb_test_next_result', true );
+			$order->add_order_note ( 'Process renewal payment by gateway-unit-test ' . ($success ? 'successfully' : 'unsuccessfully') );
 			
-			if (is_wp_error ( $result )) {
-				WC_Subscriptions_Manager::process_subscription_payment_failure_on_order ( $order, $product_id );
-			} else {
+			if ($success) {
 				WC_Subscriptions_Manager::process_subscription_payments_on_order ( $order );
+			} else {
+				WC_Subscriptions_Manager::process_subscription_payment_failure_on_order ( $order, $product_id );
 			}
 		}
 	}
