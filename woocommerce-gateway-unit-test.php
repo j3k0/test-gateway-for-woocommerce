@@ -15,11 +15,8 @@ function sb_wc_test_init() {
 	class WC_Gateway_sb_test extends WC_Payment_Gateway {
 		public function __construct() {
 			$this->id = 'sb_test';
-			$this->has_fields = false;
 			$this->method_title = __ ( 'Gateway unit test', 'woocommerce' );
-			$this->init_form_fields ();
-			$this->init_settings ();
-			$this->title = 'Gateway unit test';
+			$this->has_fields = true;
 			$this->supports = array (
 					'products',
 					'subscriptions',
@@ -28,13 +25,40 @@ function sb_wc_test_init() {
 					'subscription_reactivation',
 					'subscription_amount_changes',
 					'subscription_date_changes',
-					'subscription_payment_method_change' 
+					'subscription_payment_method_change',
+					'subscription_payment_method_change_customer',
+					'subscription_payment_method_change_admin' 
 			);
+			
+			// Load the form fields
+			$this->init_form_fields ();
+			
+			// Load the settings.
+			$this->init_settings ();
+			
+			$this->title = 'Gateway unit test';
 			
 			add_action ( 'woocommerce_update_options_payment_gateways_' . $this->id, array (
 					$this,
 					'process_admin_options' 
 			) );
+			
+			if (class_exists ( 'WC_Subscriptions_Order' )) {
+				add_action ( 'woocommerce_scheduled_subscription_payment_' . $this->id, array (
+						$this,
+						'scheduled_subscription_payment' 
+				), 10, 2 );
+				
+				// Allow store managers to manually set Simplify as the payment method on a subscription
+				add_filter ( 'woocommerce_subscription_payment_meta', array (
+						$this,
+						'add_subscription_payment_meta' 
+				), 10, 2 );
+				add_filter ( 'woocommerce_subscription_validate_payment_meta', array (
+						$this,
+						'validate_subscription_payment_meta' 
+				), 10, 2 );
+			}
 		}
 		function init_form_fields() {
 			$this->form_fields = array (
@@ -112,15 +136,12 @@ function sb_wc_test_init() {
 		 */
 		public function validate_subscription_payment_meta($payment_method_id, $payment_meta) {
 			if ($this->id === $payment_method_id) {
-				
 				if (! isset ( $payment_meta ['post_meta'] ['_sb_test_customer_id'] ['value'] ) || empty ( $payment_meta ['post_meta'] ['_sb_test_customer_id'] ['value'] )) {
 					throw new Exception ( 'A "_sb_test_customer_id" value is required.' );
 				}
 				
-				if (! isset ( $payment_meta ['post_meta'] ['_sb_test_initial_result'] ['value'] ) || empty ( $payment_meta ['post_meta'] ['_sb_test_initial_result'] ['value'] )) {
+				if (! isset ( $payment_meta ['post_meta'] ['_sb_test_initial_result'] ['value'] ) || ! is_bool ( $payment_meta ['post_meta'] ['_sb_test_initial_result'] ['value'] )) {
 					throw new Exception ( 'A "_sb_test_initial_result" value is required.' );
-				} elseif (! is_bool ( $payment_meta ['post_meta'] ['_sb_test_initial_result'] ['value'] )) {
-					throw new Exception ( 'Invalid result. A valid "_sb_test_initial_result" must be a boolean".' );
 				}
 			}
 		}
@@ -133,7 +154,8 @@ function sb_wc_test_init() {
 		 */
 		public function process_payment($order_id) {
 			$order = new WC_Order ( $order_id );
-			$success = $order->get_meta ( '_sb_test_initial_result', true );
+			// $success = $order->get_meta ( '_sb_test_initial_result', true );
+			$success = get_post_meta ( $order_id, '_sb_test_initial_result', true );
 			
 			$order->add_order_note ( 'Process initial payment by gateway-unit-test ' . ($success ? 'successfully' : 'unsuccessfully') );
 			
@@ -161,18 +183,22 @@ function sb_wc_test_init() {
 		/**
 		 * Process recurring payment
 		 *
-		 * @param double $amount_to_charge        	
-		 * @param WC_Order $order        	
-		 * @param int $product_id        	
+		 * @param float $amount_to_charge
+		 *        	The amount to charge.
+		 * @param WC_Order $renewal_order
+		 *        	A WC_Order object created to record the renewal payment.
 		 */
-		public function scheduled_subscription_payment($amount_to_charge, $order, $product_id) {
-			$success = $order->get_meta ( '_sb_test_next_result', true );
-			$order->add_order_note ( 'Process renewal payment by gateway-unit-test ' . ($success ? 'successfully' : 'unsuccessfully') );
+		public function scheduled_subscription_payment($amount_to_charge, $renewal_order) {
+			$success = $renewal_order->get_meta ( '_sb_test_next_result', true );
+			// $success = get_post_meta ( $order->get_id(), '_sb_test_next_result', true );
+			$renewal_order->add_order_note ( 'Process renewal payment by gateway-unit-test ' . ($success ? 'successfully' : 'unsuccessfully') );
 			
 			if ($success) {
-				WC_Subscriptions_Manager::process_subscription_payments_on_order ( $order );
+				$renewal_order->payment_complete ();
+				$renewal_order->update_status ( 'completed' );
+				WC_Subscriptions_Manager::process_subscription_payments_on_order ( $renewal_order );
 			} else {
-				WC_Subscriptions_Manager::process_subscription_payment_failure_on_order ( $order, $product_id );
+				WC_Subscriptions_Manager::process_subscription_payment_failure_on_order ( $renewal_order, $product_id );
 			}
 		}
 	}
